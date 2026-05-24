@@ -1,0 +1,6 @@
+[toolchain]
+# Pin to stable. wreq 6.0.0-rc.28 declares rust-version = "1.85"; mach itself
+# stays on edition 2021 (per arch doc §9 (a)). CI uses the same channel.
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

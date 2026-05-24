@@ -1,0 +1,30 @@
+[package]
+name = "mach-net"
+description = "Chrome-fingerprint-shaped HTTP client for mach-browser, built on wreq + BoringSSL."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mach-core = { workspace = true }
+mach-profile = { workspace = true }
+
+anyhow = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+wreq-util = { workspace = true }
+
+# wreq's `prefix-symbols` feature renames BoringSSL exports to avoid clashes
+# with system OpenSSL. Per upstream README and the obscura cross-platform
+# split, this is only safe on Linux/Android. Enabling it on Windows or macOS
+# leaves dangling `build_script_main_*` symbols at link time. See
+# architecture doc §0.7 (pre-Phase-0 spike result, prereq #2).
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+wreq = { workspace = true, features = ["prefix-symbols"] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "android")))'.dependencies]
+wreq = { workspace = true }

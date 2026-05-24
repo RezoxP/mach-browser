@@ -1,0 +1,9 @@
+[package]
+name = "mach-profile"
+description = "BrowserProfile registry shared by mach-net (HTTP fingerprint) and mach-webapi (JS surface)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
