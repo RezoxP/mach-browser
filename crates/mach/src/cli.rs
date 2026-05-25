@@ -60,6 +60,14 @@ impl Cli {
 pub enum Command {
     /// Fetch a URL and emit the requested representation to stdout.
     Fetch(FetchArgs),
+
+    /// Evaluate a JavaScript expression in a fresh V8 isolate.
+    ///
+    /// Phase 1A: no DOM, no Web APIs, no network. Just raw V8. This is
+    /// here to (a) prove the JS engine works end-to-end on every supported
+    /// platform and (b) give scripts/CI a way to smoke-test V8 without
+    /// going through a fetched page. Web API surface lands in Phase 1B+.
+    Js(JsArgs),
 }
 
 /// `mach fetch` arguments.
@@ -90,6 +98,18 @@ impl FetchArgs {
     pub fn timeout_dur(&self) -> Duration {
         Duration::from_secs(self.timeout)
     }
+}
+
+/// `mach js` arguments.
+#[derive(Debug, Args)]
+pub struct JsArgs {
+    /// JavaScript source to evaluate.
+    #[arg(long, conflicts_with = "file")]
+    pub eval: Option<String>,
+
+    /// Path to a JavaScript source file to evaluate. Use `-` for stdin.
+    #[arg(long, conflicts_with = "eval")]
+    pub file: Option<String>,
 }
 
 /// Available `--dump` formats.
