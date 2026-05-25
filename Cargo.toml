@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mach",
+    "crates/mach-agent",
+    "crates/mach-core",
+    "crates/mach-dom",
+    "crates/mach-net",
+    "crates/mach-parser",
+    "crates/mach-profile",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/RezoxP/mach-browser"
+authors = ["mach-browser contributors"]
+
+[workspace.dependencies]
+# Internal crates.
+mach-agent = { path = "crates/mach-agent", version = "0.0.1" }
+mach-core = { path = "crates/mach-core", version = "0.0.1" }
+mach-dom = { path = "crates/mach-dom", version = "0.0.1" }
+mach-net = { path = "crates/mach-net", version = "0.0.1" }
+mach-parser = { path = "crates/mach-parser", version = "0.0.1" }
+mach-profile = { path = "crates/mach-profile", version = "0.0.1" }
+
+# External crates.
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tendril = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+wreq = { version = "6.0.0-rc.28", features = ["json", "gzip", "brotli", "zstd"] }
+wreq-util = "3.0.0-rc.10"
+
+# Release profile: aggressive size + LTO, matching mach's 60-70 MB binary budget.
+# See architecture doc §0.5 + §0.7 for the build-flag split per platform.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = 3

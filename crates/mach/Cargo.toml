@@ -1,0 +1,28 @@
+[package]
+name = "mach"
+description = "mach-browser CLI entrypoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "mach"
+path = "src/main.rs"
+
+[dependencies]
+mach-agent = { workspace = true }
+mach-core = { workspace = true }
+mach-dom = { workspace = true }
+mach-net = { workspace = true }
+mach-parser = { workspace = true }
+mach-profile = { workspace = true }
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }

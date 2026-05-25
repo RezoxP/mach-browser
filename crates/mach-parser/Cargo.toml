@@ -1,0 +1,17 @@
+[package]
+name = "mach-parser"
+description = "html5ever-backed HTML parser that emits a mach-dom::Document."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mach-core = { workspace = true }
+mach-dom = { workspace = true }
+
+html5ever = { workspace = true }
+markup5ever_rcdom = { workspace = true }
+tendril = { workspace = true }

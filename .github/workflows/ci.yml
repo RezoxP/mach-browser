@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Hold cargo's network calls to one job at a time per PR-ref to keep flaky
+# crates.io rate-limit errors out of the matrix.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Avoid incremental compilation in CI — slower wall time but smaller cache.
+  CARGO_INCREMENTAL: "0"
+  # NOTE: we intentionally do NOT export `RUSTFLAGS=-D warnings` here,
+  # because `RUSTFLAGS` in the environment overrides the per-target
+  # `rustflags` set in `.cargo/config.toml` (the gcc-style and MSVC-style
+  # link flags that hit our 60-70 MB binary budget). Warnings-as-errors is
+  # enforced via `cargo clippy ... -- -D warnings` in the lint job and via
+  # workspace lint config in `Cargo.toml`.
+
+jobs:
+  lint:
+    name: lint (fmt + clippy)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-linux:
+    name: build + test (linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install build prereqs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake nasm clang libclang-dev pkg-config
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo build --release
+        run: cargo build --workspace --release --target x86_64-unknown-linux-gnu
+      - name: Assert binary < 100 MB
+        run: |
+          set -euo pipefail
+          bin=target/x86_64-unknown-linux-gnu/release/mach
+          size=$(stat -c%s "$bin")
+          echo "mach binary: $size bytes"
+          test "$size" -lt 104857600
+      - name: cargo test
+        run: cargo test --workspace --release --target x86_64-unknown-linux-gnu --no-fail-fast
+
+  build-windows:
+    name: build + test (windows-msvc)
+    runs-on: windows-2022
+    # Per Phase-0 spike findings (arch doc §0.7): wreq's BoringSSL build on
+    # Windows MSVC requires NASM (perlasm output) and LLVM/Clang's
+    # libclang.dll (bindgen). cmake + cl/link.exe come from VS 2022 already
+    # present on the windows-2022 runner.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+      - name: Install LLVM
+        run: choco install -y llvm --no-progress
+      - name: Configure libclang
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          echo "LIBCLANG_PATH=$llvm" >> $env:GITHUB_ENV
+          echo $llvm >> $env:GITHUB_PATH
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo build --release
+        run: cargo build --workspace --release --target x86_64-pc-windows-msvc
+      - name: Assert binary < 100 MB
+        shell: pwsh
+        run: |
+          $bin = "target\x86_64-pc-windows-msvc\release\mach.exe"
+          $size = (Get-Item $bin).Length
+          Write-Host "mach.exe: $size bytes"
+          if ($size -ge 104857600) { exit 1 }
+      - name: cargo test
+        run: cargo test --workspace --release --target x86_64-pc-windows-msvc --no-fail-fast
