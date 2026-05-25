@@ -10,4 +10,6 @@ description = "V8 isolate + context lifecycle for mach-browser."
 
 [dependencies]
 mach-core.workspace = true
+mach-profile.workspace = true
+tracing.workspace = true
 v8.workspace = true
