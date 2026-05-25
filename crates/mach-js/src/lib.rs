@@ -33,9 +33,11 @@
 use std::sync::OnceLock;
 
 use mach_core::{Error, Result};
+use mach_dom::Document;
 use mach_profile::{BrowserProfile, Registry};
 
 mod bindings;
+mod dom;
 
 /// Lazy, one-shot V8 platform initialization.
 ///
@@ -115,11 +117,12 @@ impl Default for JsRuntime {
     }
 }
 
-/// Build a [`JsRuntime`] with overridden profile / location.
+/// Build a [`JsRuntime`] with overridden profile / location / document.
 #[derive(Default)]
 pub struct JsRuntimeBuilder {
     profile: Option<BrowserProfile>,
     location: Option<String>,
+    document: Option<Document>,
 }
 
 impl JsRuntimeBuilder {
@@ -135,11 +138,23 @@ impl JsRuntimeBuilder {
         self
     }
 
+    /// Attach a parsed [`Document`] as the page's `document` global.
+    ///
+    /// When set, the runtime exposes the read-only DOM surface (Phase
+    /// 1C): `document`, `Element`, `Text` accessors and methods. When
+    /// unset, `document` is not defined and JS that reads it sees
+    /// `undefined`.
+    pub fn document(mut self, document: Document) -> Self {
+        self.document = Some(document);
+        self
+    }
+
     /// Finalize and construct the runtime.
     pub fn build(self) -> JsRuntime {
         ensure_v8_initialized();
         let profile = self.profile.unwrap_or_else(Registry::default_profile);
         let location = self.location.unwrap_or_else(|| "about:blank".to_string());
+        let document = self.document;
 
         let mut isolate = v8::Isolate::new(v8::CreateParams::default());
         let context = {
@@ -148,6 +163,9 @@ impl JsRuntimeBuilder {
             let scope = &mut v8::ContextScope::new(scope, context);
 
             bindings::install(scope, &profile, &location);
+            if let Some(doc) = document {
+                dom::install(scope, doc, &location);
+            }
 
             v8::Global::new(scope, context)
         };
@@ -325,5 +343,315 @@ mod tests {
             let out = rt.eval(&format!("console.{level}('x'); 1")).unwrap();
             assert_eq!(out, "1");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 1C: DOM bindings
+    // -----------------------------------------------------------------
+
+    /// Build a small fixture: `<html><head><title>T</title></head>
+    /// <body><p id="x" class="a b">hi <b>there</b></p></body></html>`.
+    fn fixture_document() -> mach_dom::Document {
+        use mach_dom::{Attr, NodeId, NodeKind};
+        let mut d = mach_dom::Document::new();
+        let html = d.push(
+            NodeId::ROOT,
+            NodeKind::Element {
+                name: "html".into(),
+                attrs: vec![],
+            },
+        );
+        let head = d.push(
+            html,
+            NodeKind::Element {
+                name: "head".into(),
+                attrs: vec![],
+            },
+        );
+        let title = d.push(
+            head,
+            NodeKind::Element {
+                name: "title".into(),
+                attrs: vec![],
+            },
+        );
+        d.push(title, NodeKind::Text("T".into()));
+        let body = d.push(
+            html,
+            NodeKind::Element {
+                name: "body".into(),
+                attrs: vec![],
+            },
+        );
+        let p = d.push(
+            body,
+            NodeKind::Element {
+                name: "p".into(),
+                attrs: vec![
+                    Attr {
+                        name: "id".into(),
+                        value: "x".into(),
+                    },
+                    Attr {
+                        name: "class".into(),
+                        value: "a b".into(),
+                    },
+                ],
+            },
+        );
+        d.push(p, NodeKind::Text("hi ".into()));
+        d.push(
+            p,
+            NodeKind::Element {
+                name: "b".into(),
+                attrs: vec![],
+            },
+        );
+        // Note: <b>'s text is added as a sibling of <b>, not as a child,
+        // for variety in the test — that's fine, it just exercises a
+        // different code path.
+        let b = d.node(p).children[1];
+        d.push(b, NodeKind::Text("there".into()));
+        d
+    }
+
+    fn fixture_runtime() -> JsRuntime {
+        JsRuntime::builder()
+            .location("https://example.com/page?x=1")
+            .document(fixture_document())
+            .build()
+    }
+
+    #[test]
+    fn document_is_installed_when_builder_has_document() {
+        let mut rt = fixture_runtime();
+        assert_eq!(rt.eval("typeof document").unwrap(), "object");
+        assert_eq!(rt.eval("document.nodeType").unwrap(), "9");
+        assert_eq!(rt.eval("document.nodeName").unwrap(), "#document");
+    }
+
+    #[test]
+    fn document_is_undefined_without_builder_document() {
+        // Phase 1B back-compat: a runtime built without .document()
+        // should still work, just with `document === undefined`.
+        let mut rt = JsRuntime::new();
+        assert_eq!(rt.eval("typeof document").unwrap(), "undefined");
+    }
+
+    #[test]
+    fn document_url_reflects_location() {
+        let mut rt = fixture_runtime();
+        assert_eq!(
+            rt.eval("document.URL").unwrap(),
+            "https://example.com/page?x=1"
+        );
+        assert_eq!(
+            rt.eval("document.documentURI").unwrap(),
+            "https://example.com/page?x=1"
+        );
+    }
+
+    #[test]
+    fn document_element_head_body_title() {
+        let mut rt = fixture_runtime();
+        assert_eq!(rt.eval("document.documentElement.tagName").unwrap(), "HTML");
+        assert_eq!(rt.eval("document.head.tagName").unwrap(), "HEAD");
+        assert_eq!(rt.eval("document.body.tagName").unwrap(), "BODY");
+        assert_eq!(rt.eval("document.title").unwrap(), "T");
+    }
+
+    #[test]
+    fn element_attributes_read() {
+        let mut rt = fixture_runtime();
+        // Walk to <p>.
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.tagName").unwrap(),
+            "P"
+        );
+        assert_eq!(rt.eval("document.body.firstElementChild.id").unwrap(), "x");
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.className")
+                .unwrap(),
+            "a b"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.getAttribute('id')")
+                .unwrap(),
+            "x"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.getAttribute('missing')")
+                .unwrap(),
+            "null"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.hasAttribute('id')")
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.hasAttribute('missing')")
+                .unwrap(),
+            "false"
+        );
+        assert_eq!(
+            rt.eval("JSON.stringify(document.body.firstElementChild.getAttributeNames())")
+                .unwrap(),
+            "[\"id\",\"class\"]"
+        );
+    }
+
+    #[test]
+    fn element_text_content() {
+        let mut rt = fixture_runtime();
+        // <p> contains "hi " + <b> ("there") = "hi there".
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.textContent")
+                .unwrap(),
+            "hi there"
+        );
+    }
+
+    #[test]
+    fn element_inner_and_outer_html() {
+        let mut rt = fixture_runtime();
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.outerHTML")
+                .unwrap(),
+            "<p id=\"x\" class=\"a b\">hi <b>there</b></p>"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.innerHTML")
+                .unwrap(),
+            "hi <b>there</b>"
+        );
+    }
+
+    #[test]
+    fn navigation_parent_and_children() {
+        let mut rt = fixture_runtime();
+        // body.parentNode is html; html.parentNode is the document.
+        assert_eq!(rt.eval("document.body.parentNode.tagName").unwrap(), "HTML");
+        assert_eq!(
+            rt.eval("document.body.parentElement.tagName").unwrap(),
+            "HTML"
+        );
+        assert_eq!(
+            rt.eval("document.documentElement.parentNode.nodeType")
+                .unwrap(),
+            "9"
+        );
+        assert_eq!(
+            rt.eval("document.documentElement.parentElement").unwrap(),
+            "null"
+        );
+        // body has one element child (the <p>).
+        assert_eq!(rt.eval("document.body.children.length").unwrap(), "1");
+        assert_eq!(rt.eval("document.body.childElementCount").unwrap(), "1");
+    }
+
+    #[test]
+    fn node_identity_preserved_across_reads() {
+        // The headline DOM contract: el === el.parentNode.children[0].
+        // Without the identity cache, two separate reads would return
+        // two different JS wrappers and `===` would fail.
+        let mut rt = fixture_runtime();
+        let out = rt
+            .eval(
+                "const p = document.body.firstElementChild;
+                   p === p.parentNode.children[0]",
+            )
+            .unwrap();
+        assert_eq!(out, "true");
+    }
+
+    #[test]
+    fn first_and_last_element_child_skip_text_nodes() {
+        let mut rt = fixture_runtime();
+        // <p> has children: [text "hi ", <b>]. firstElementChild must
+        // skip the text node and return <b>.
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstElementChild.tagName")
+                .unwrap(),
+            "B"
+        );
+        // firstChild does NOT skip — should be the text node.
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.nodeType")
+                .unwrap(),
+            "3"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.data")
+                .unwrap(),
+            "hi "
+        );
+    }
+
+    #[test]
+    fn siblings_walk_in_document_order() {
+        let mut rt = fixture_runtime();
+        // <p>'s children: [text "hi ", <b>].
+        // nextSibling of "hi " is <b>; previousSibling of <b> is "hi ".
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.nextSibling.tagName")
+                .unwrap(),
+            "B"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstElementChild.previousSibling.data")
+                .unwrap(),
+            "hi "
+        );
+        // Bounds: previousSibling of the first child is null.
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.previousSibling")
+                .unwrap(),
+            "null"
+        );
+    }
+
+    #[test]
+    fn get_element_by_id_finds_match() {
+        let mut rt = fixture_runtime();
+        assert_eq!(
+            rt.eval("document.getElementById('x').tagName").unwrap(),
+            "P"
+        );
+    }
+
+    #[test]
+    fn get_element_by_id_returns_null_for_missing() {
+        let mut rt = fixture_runtime();
+        assert_eq!(rt.eval("document.getElementById('zzz')").unwrap(), "null");
+    }
+
+    #[test]
+    fn text_node_surface() {
+        let mut rt = fixture_runtime();
+        // p.firstChild is "hi " text node.
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.nodeType")
+                .unwrap(),
+            "3"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.nodeName")
+                .unwrap(),
+            "#text"
+        );
+        assert_eq!(
+            rt.eval("document.body.firstElementChild.firstChild.textContent")
+                .unwrap(),
+            "hi "
+        );
+    }
+
+    #[test]
+    fn element_node_type_is_one() {
+        let mut rt = fixture_runtime();
+        assert_eq!(rt.eval("document.body.nodeType").unwrap(), "1");
+        assert_eq!(rt.eval("document.body.nodeName").unwrap(), "BODY");
+        assert_eq!(rt.eval("document.body.localName").unwrap(), "body");
     }
 }
