@@ -139,6 +139,75 @@ impl Document {
         write_node(self, NodeId::ROOT, &mut out);
         out
     }
+
+    /// Serialize a single node (and its subtree) to HTML — i.e. the value
+    /// returned by `element.outerHTML` in the DOM spec.
+    pub fn serialize_node(&self, id: NodeId) -> String {
+        let mut out = String::new();
+        write_node(self, id, &mut out);
+        out
+    }
+
+    /// Serialize a node's children — i.e. `element.innerHTML`.
+    pub fn serialize_node_children(&self, id: NodeId) -> String {
+        let mut out = String::new();
+        for c in &self.node(id).children {
+            write_node(self, *c, &mut out);
+        }
+        out
+    }
+
+    /// Recursive text content (DOM `textContent` semantics: concatenate
+    /// all descendant text nodes in document order; ignore comments and
+    /// element tags themselves).
+    pub fn text_content(&self, id: NodeId) -> String {
+        let mut out = String::new();
+        collect_text(self, id, &mut out);
+        out
+    }
+
+    /// Walk the document looking for an element with `id="..."` matching
+    /// `value`. Returns the first match in document order (matches the
+    /// DOM spec).
+    ///
+    /// Linear scan. Phase 1+ will memoize / index this when JS workloads
+    /// start hammering `getElementById`.
+    pub fn find_by_id(&self, value: &str) -> Option<NodeId> {
+        for id in self.iter_pre_order() {
+            if let NodeKind::Element { attrs, .. } = &self.node(id).kind {
+                if attrs.iter().any(|a| a.name == "id" && a.value == value) {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+
+    /// First element in document order whose lowercased tag name equals
+    /// `name`. Used by the JS bindings to wire up `document.documentElement`,
+    /// `.head`, `.body`.
+    pub fn find_first_element(&self, name: &str) -> Option<NodeId> {
+        for id in self.iter_pre_order() {
+            if let NodeKind::Element { name: n, .. } = &self.node(id).kind {
+                if n == name {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn collect_text(doc: &Document, id: NodeId, out: &mut String) {
+    match &doc.node(id).kind {
+        NodeKind::Text(s) => out.push_str(s),
+        NodeKind::Comment(_) | NodeKind::Doctype { .. } => {}
+        NodeKind::Document | NodeKind::Element { .. } => {
+            for c in &doc.node(id).children {
+                collect_text(doc, *c, out);
+            }
+        }
+    }
 }
 
 fn write_node(doc: &Document, id: NodeId, out: &mut String) {
@@ -294,6 +363,73 @@ mod tests {
         let s = d.serialize_html();
         assert!(s.contains("<meta charset=\"utf-8\">"));
         assert!(!s.contains("</meta>"));
+    }
+
+    #[test]
+    fn text_content_concatenates_descendants() {
+        let mut d = Document::new();
+        let html = d.push(NodeId::ROOT, elem("html"));
+        let body = d.push(html, elem("body"));
+        let p = d.push(body, elem("p"));
+        d.push(p, NodeKind::Text("hi ".into()));
+        let b = d.push(p, elem("b"));
+        d.push(b, NodeKind::Text("there".into()));
+        assert_eq!(d.text_content(p), "hi there");
+        assert_eq!(d.text_content(b), "there");
+    }
+
+    #[test]
+    fn serialize_node_emits_just_subtree() {
+        let mut d = Document::new();
+        let html = d.push(NodeId::ROOT, elem("html"));
+        let body = d.push(html, elem("body"));
+        d.push(body, NodeKind::Text("x".into()));
+        assert_eq!(d.serialize_node(body), "<body>x</body>");
+        assert_eq!(d.serialize_node_children(body), "x");
+    }
+
+    #[test]
+    fn find_by_id_walks_in_document_order() {
+        let mut d = Document::new();
+        let html = d.push(NodeId::ROOT, elem("html"));
+        let body = d.push(html, elem("body"));
+        let _first = d.push(
+            body,
+            NodeKind::Element {
+                name: "div".into(),
+                attrs: vec![Attr {
+                    name: "id".into(),
+                    value: "target".into(),
+                }],
+            },
+        );
+        let _second = d.push(
+            body,
+            NodeKind::Element {
+                name: "span".into(),
+                attrs: vec![Attr {
+                    name: "id".into(),
+                    value: "target".into(),
+                }],
+            },
+        );
+        // Spec: first match in tree order.
+        let found = d.find_by_id("target").unwrap();
+        assert!(matches!(
+            &d.node(found).kind,
+            NodeKind::Element { name, .. } if name == "div"
+        ));
+        assert_eq!(d.find_by_id("missing"), None);
+    }
+
+    #[test]
+    fn find_first_element_returns_root_match() {
+        let mut d = Document::new();
+        let html = d.push(NodeId::ROOT, elem("html"));
+        d.push(html, elem("head"));
+        d.push(html, elem("body"));
+        assert_eq!(d.find_first_element("body"), Some(NodeId(3)));
+        assert_eq!(d.find_first_element("nope"), None);
     }
 
     #[test]

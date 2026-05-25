@@ -874,9 +874,9 @@ name = "mach-js"
 version = "0.0.1"
 dependencies = [
  "mach-core",
+ "mach-dom",
  "mach-profile",
  "tracing",
- "tracing-subscriber",
  "v8",
 ]
 
