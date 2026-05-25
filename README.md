@@ -51,6 +51,28 @@ target\release\mach.exe fetch --dump html https://example.com
 These prereqs are why the Windows CI job in `.github/workflows/ci.yml`
 installs `nasm` and `llvm` via Chocolatey before invoking `cargo build`.
 
+## Pre-built binaries
+
+You don't need to build from source — every push to `main` produces a
+downloadable binary, and tagged releases produce permanent GitHub Release
+assets.
+
+- **Latest dev build:** open the [Actions tab][actions], pick the most recent
+  `Release` workflow run, scroll to the "Artifacts" section, and download
+  `mach-<short-sha>-x86_64-unknown-linux-gnu` (Linux) or
+  `mach-<short-sha>-x86_64-pc-windows-msvc` (Windows). Each artifact ships
+  the binary plus a `.sha256` checksum file. Dev artifacts are retained for
+  90 days.
+- **Tagged release:** see the [Releases page][releases] for permanent
+  download URLs of `mach-vX.Y.Z-<target>.{tar.gz,zip}`.
+- **Trigger a build manually:** any maintainer can hit "Run workflow" on
+  the [Release workflow][workflow] to produce fresh artifacts off any
+  branch.
+
+[actions]: https://github.com/RezoxP/mach-browser/actions
+[releases]: https://github.com/RezoxP/mach-browser/releases
+[workflow]: https://github.com/RezoxP/mach-browser/actions/workflows/release.yml
+
 ## CLI
 
 ```

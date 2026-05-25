@@ -1,0 +1,171 @@
+name: Release
+
+# Three ways this workflow runs:
+#   1. Push to `main`  — produces dev-build artifacts you can download from
+#      the Actions UI for ~90 days.
+#   2. Manual dispatch — same as a main-push, but you can run it any time
+#      against any branch from the Actions tab.
+#   3. Tag push matching `v*` — produces artifacts AND a permanent GitHub
+#      Release with the binaries attached.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to publish a GitHub Release on tag push
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            archive: tar.gz
+            bin: mach
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            archive: zip
+            bin: mach.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Linux build prereqs (BoringSSL + bindgen).
+      - name: Install Linux build prereqs
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake nasm clang libclang-dev pkg-config
+
+      # Windows build prereqs (per arch doc §0.7 / Phase 0 spike).
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        run: choco install -y llvm --no-progress
+      - name: Configure libclang (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          echo "LIBCLANG_PATH=$llvm" >> $env:GITHUB_ENV
+          echo $llvm >> $env:GITHUB_PATH
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: cargo build --release
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+
+      - name: Assert binary < 100 MB
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          size=$(wc -c <"$bin")
+          echo "$bin: $size bytes"
+          test "$size" -lt 104857600
+
+      - name: Pick artifact version label
+        id: ver
+        shell: bash
+        run: |
+          ref="${GITHUB_REF#refs/tags/}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "label=$ref" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="mach-${{ steps.ver.outputs.label }}-${{ matrix.target }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$stage/"
+          cp LICENSE-APACHE NOTICE README.md "$stage/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          echo "archive_path=dist/$name.tar.gz" >> "$GITHUB_ENV"
+          echo "archive_sha=dist/$name.tar.gz.sha256" >> "$GITHUB_ENV"
+          echo "archive_name=$name" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "mach-${{ steps.ver.outputs.label }}-${{ matrix.target }}"
+          $stage = "dist\$name"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.bin }}" "$stage\"
+          Copy-Item LICENSE-APACHE, NOTICE, README.md "$stage\"
+          Compress-Archive -Path $stage -DestinationPath "dist\$name.zip" -Force
+          $hash = (Get-FileHash "dist\$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Set-Content -NoNewline "dist\$name.zip.sha256"
+          "archive_path=dist\$name.zip"   | Out-File -Append $env:GITHUB_ENV
+          "archive_sha=dist\$name.zip.sha256" | Out-File -Append $env:GITHUB_ENV
+          "archive_name=$name" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.archive_name }}
+          path: |
+            ${{ env.archive_path }}
+            ${{ env.archive_sha }}
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten archive layout
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) \
+            -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
