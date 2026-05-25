@@ -12,12 +12,29 @@ Headline targets:
 - < 100 MB binary (60-70 MB target with LTO + strip)
 - < 100 ms cold start
 
-## Status — Phase 0 (skeleton)
+## Status — Phase 1A (V8 wired up)
 
-This is the Phase 0 skeleton: workspace layout, CI matrix (Linux + Windows
-MSVC), the validated `wreq` HTTP stack with Chrome 131 TLS+HTTP/2 fingerprint,
-an `html5ever`-backed parser, and a no-JS `fetch` command that dumps HTML,
-links, text, or rough markdown. **No JavaScript yet** — V8 lands in Phase 1.
+What works today:
+
+- Workspace + CI matrix (Linux + Windows MSVC).
+- `wreq` HTTP stack with Chrome 131 TLS+HTTP/2 fingerprint.
+- `html5ever`-backed parser + arena-backed DOM.
+- `mach fetch` returns HTML, markdown, links, or visible text from any
+  static page. JS is never loaded for this path — confirmed `< 6 ms` cold
+  start (Tactic #1, lazy V8 init).
+- `mach js --eval '<expr>'` evaluates an arbitrary JS expression in a
+  fresh V8 isolate (~9 ms cold). No DOM, no Web APIs, no network — just
+  raw V8. This is here to prove the engine works end-to-end on every
+  supported platform before DOM bindings land.
+
+Not yet:
+
+- DOM / EventTarget / Window / Navigator JS bindings (Phase 1B+).
+- `mach fetch --execute-js <URL>` — the post-JS-evaluation render path
+  (Phase 1B).
+- Fingerprint spoofing, `window.chrome`, real `SubtleCrypto`, Canvas /
+  WebGL / Audio shims (Phase 2).
+- Cloudflare Turnstile pass (Phase 2 gate, the v1 release criterion).
 
 See the architecture proposal in `docs/architecture.md` for the full plan.
 
@@ -32,13 +49,16 @@ cargo build --release
 
 ### Windows (MSVC)
 
-Phase 0 requires the following toolchain components on Windows:
+Phase 1A requires the following toolchain components on Windows:
 
 1. `rustup` with the `x86_64-pc-windows-msvc` host toolchain.
 2. **Visual Studio 2022 Build Tools** with the **VCTools** workload
    (`cl.exe`, `link.exe`, Windows SDK, `cmake`).
 3. **NASM** on `PATH` (BoringSSL's perlasm output needs it).
 4. **LLVM/Clang** with `LIBCLANG_PATH` exported (`bindgen` needs `libclang.dll`).
+
+(V8 itself ships as a prebuilt static library via the `v8` crate — no
+`depot_tools`, GN, ninja, or Python 3 needed.)
 
 Then from a Developer Command Prompt for VS 2022:
 
@@ -75,6 +95,8 @@ assets.
 
 ## CLI
 
+### `mach fetch` — HTTP-only page download
+
 ```
 mach fetch [--dump html|markdown|links|text]
            [--user-agent STR]
@@ -89,10 +111,38 @@ mach fetch [--dump html|markdown|links|text]
 | `links`    | One `href` per line, deduplicated, in document order     |
 | `text`     | Visible text content with whitespace collapsed           |
 
-Exit codes: `0` success, `1` HTTP error, `2` parse error, `3` argument error.
+This path **does not initialize V8**. Cold start is ~5-6 ms on a release
+build, RSS stays in single-digit MB. JS-rendered pages will return whatever
+the server emits server-side — the post-JS render path lands in Phase 1B
+as `mach fetch --execute-js`.
 
-JavaScript is not yet supported. JS-rendered pages will return whatever the
-server emits server-side. JS support arrives in Phase 1.
+### `mach js` — evaluate a JavaScript expression
+
+```
+mach js --eval '<source>'
+mach js --file <path>      # use `-` for stdin
+```
+
+Compiles and runs the source in a fresh V8 isolate. The result is coerced
+to a string (V8's `ToString`) and printed to stdout. Exceptions print to
+stderr and exit with code 1.
+
+```
+$ mach js --eval '21 + 21'
+42
+$ mach js --eval 'JSON.stringify({a: 1, b: [2, 3]})'
+{"a":1,"b":[2,3]}
+$ echo 'Math.sqrt(2)' | mach js --file -
+1.4142135623730951
+```
+
+No DOM, no Web APIs, no `fetch`, no `document` — those land in Phase 1B+.
+This subcommand exists to (a) prove V8 itself works on every supported
+platform and (b) let CI smoke-test the JS engine.
+
+### Exit codes
+
+`0` success, `1` HTTP / JS / I/O error, `2` parse error, `3` argument error.
 
 ## License
 

@@ -16,6 +16,7 @@ path = "src/main.rs"
 mach-agent = { workspace = true }
 mach-core = { workspace = true }
 mach-dom = { workspace = true }
+mach-js = { workspace = true }
 mach-net = { workspace = true }
 mach-parser = { workspace = true }
 mach-profile = { workspace = true }

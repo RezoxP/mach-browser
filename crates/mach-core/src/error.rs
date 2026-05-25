@@ -25,6 +25,10 @@ pub enum Error {
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
 
+    /// JavaScript engine compile/runtime failure.
+    #[error("js error: {0}")]
+    Js(String),
+
     /// Anything else we don't have a structured variant for yet.
     #[error("{0}")]
     Other(String),
@@ -37,7 +41,7 @@ impl Error {
             Error::InvalidArguments(_) => 3,
             Error::Parse(_) => 2,
             Error::Network(_) => 1,
-            Error::Io(_) | Error::Other(_) => 1,
+            Error::Io(_) | Error::Js(_) | Error::Other(_) => 1,
         }
     }
 }

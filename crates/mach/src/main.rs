@@ -1,14 +1,17 @@
 //! `mach` CLI entrypoint.
 //!
-//! Phase 0 ships one subcommand, `fetch`. Later phases add `serve` (CDP),
-//! `mcp`, and `scrape`. The argument parser lives in `cli.rs`; this file
-//! is the async runtime + dispatch + exit-code mapping.
+//! Phase 0 shipped `fetch`. Phase 1A adds `js --eval` so the JS engine is
+//! testable end-to-end before DOM/Web-API bindings land in Phase 1B. Later
+//! phases add `serve` (CDP), `mcp`, and `scrape`. The argument parser lives
+//! in `cli.rs`; this file is the async runtime + dispatch + exit-code
+//! mapping.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 mod cli;
 mod fetch;
+mod js;
 
 use std::process::ExitCode;
 
@@ -59,5 +62,9 @@ async fn run(cli: Cli) -> Result<(), Error> {
     let config = cli.to_config();
     match cli.command {
         Command::Fetch(args) => fetch::run(args, config).await,
+        // `js` is synchronous (V8 itself blocks the current thread). We
+        // still hand it off via the async dispatcher to keep one place
+        // owning exit-code mapping.
+        Command::Js(args) => js::run(args),
     }
 }

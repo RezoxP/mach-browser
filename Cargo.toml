@@ -5,6 +5,7 @@ members = [
     "crates/mach-agent",
     "crates/mach-core",
     "crates/mach-dom",
+    "crates/mach-js",
     "crates/mach-net",
     "crates/mach-parser",
     "crates/mach-profile",
@@ -23,6 +24,7 @@ authors = ["mach-browser contributors"]
 mach-agent = { path = "crates/mach-agent", version = "0.0.1" }
 mach-core = { path = "crates/mach-core", version = "0.0.1" }
 mach-dom = { path = "crates/mach-dom", version = "0.0.1" }
+mach-js = { path = "crates/mach-js", version = "0.0.1" }
 mach-net = { path = "crates/mach-net", version = "0.0.1" }
 mach-parser = { path = "crates/mach-parser", version = "0.0.1" }
 mach-profile = { path = "crates/mach-profile", version = "0.0.1" }
@@ -40,6 +42,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+v8 = "130"
 wreq = { version = "6.0.0-rc.28", features = ["json", "gzip", "brotli", "zstd"] }
 wreq-util = "3.0.0-rc.10"
 
