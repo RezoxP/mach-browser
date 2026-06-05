@@ -66,9 +66,9 @@ Architecture proposal lives at **`docs/architecture.md` in the repo**. It's auth
 
 ---
 
-## 4. What is being worked on right now (Phase 1D, planned)
+## 4. What is being worked on right now (Phase 1E, planned)
 
-**Goal of next PR:** Mutation API on the DOM bindings from Phase 1C. `document.body.appendChild(document.createElement('div'))` actually changes the tree; subsequent `outerHTML` reads reflect the change.
+**Goal of next PR:** Querying: `querySelector`, `querySelectorAll`, `getElementsByTagName`, `getElementsByClassName`. Integrates `selectors` + `cssparser` crates from the Servo stack.
 
 **Pre-reading before you write any code:**
 
@@ -122,7 +122,7 @@ Architecture proposal lives at **`docs/architecture.md` in the repo**. It's auth
 
 ---
 
-## 5. Phased plan after Phase 1D
+## 5. Phased plan after Phase 1E
 
 | Phase | Scope | Acceptance gate |
 |---|---|---|

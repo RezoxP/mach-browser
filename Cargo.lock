@@ -875,6 +875,7 @@ version = "0.0.1"
 dependencies = [
  "mach-core",
  "mach-dom",
+ "mach-parser",
  "mach-profile",
  "tracing",
  "v8",
